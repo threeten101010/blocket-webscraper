@@ -1,0 +1,18 @@
+# Blocket Scraper Configuration - Motorcycles Specialized
+
+target:
+  base_url: "https://www.blocket.se"
+  categories:
+    - name: "motorcycles"
+      path: "/mobility/search/mc"
+
+scraper_settings:
+  headless: true
+  timeout_ms: 30000
+  delay_seconds: 3.0        # Politeness delay to prevent blocks
+  max_pages: 5
+  user_agent_rotation: true
+
+database:
+  type: "duckdb"            # sqlite or duckdb
+  filename: "data/scraped_listings.duckdb"

@@ -1,0 +1,13 @@
+# HTTP and HTML parsing
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+
+# Headless browser driving (crucial for JS-heavy Classified portals)
+playwright>=1.40.0
+
+# Config and Data Serialization
+pydantic>=2.5.0
+pyyaml>=6.0.0
+
+# Database Storage
+duckdb>=0.9.0
