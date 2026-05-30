@@ -1,3 +1,27 @@
-# Local SSH keys
+# Python virtual environment
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Local Data / Scraping output
+data/
+*.sqlite
+*.duckdb
+*.db
+*.csv
+*.json
+
+# Logs & Playwright browser caches
+logs/
+*.log
+.playwright/
+
+# Editor & System
+.DS_Store
+.vscode/
+.env
+
+# SSH Keys
 ssh-key-101010
 ssh-key-101010.pub
