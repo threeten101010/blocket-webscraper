@@ -21,3 +21,7 @@ logs/
 .DS_Store
 .vscode/
 .env
+
+# SSH Keys
+ssh-key-101010
+ssh-key-101010.pub

@@ -10,7 +10,7 @@ scraper_settings:
   headless: true
   timeout_ms: 30000
   delay_seconds: 3.0        # Politeness delay to prevent blocks
-  max_pages: 5
+#  max_pages: 5
   user_agent_rotation: true
 
 database:

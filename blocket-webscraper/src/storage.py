@@ -48,6 +48,9 @@ class SQLStorage:
             )
         """)
         
+        # Ensure is_active column exists
+        conn.execute("ALTER TABLE blocket_listings ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE")
+        
         # 2. Time-series Price & Likes History (Engagement Tracker)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS price_history (
@@ -110,6 +113,7 @@ class SQLStorage:
                 l.created_year,
                 l.created_month,
                 l.status,
+                l.is_active,
                 l.first_scraped_at,
                 l.last_scraped_at,
                 l.removed_at,
@@ -294,6 +298,7 @@ class SQLStorage:
                             dealer_org_nr = ?,
                             last_scraped_at = CURRENT_TIMESTAMP,
                             status = 'active',
+                            is_active = TRUE,
                             removed_at = NULL
                         WHERE id = ?
                     """, (item.title, item.location, item.price, like_count, getattr(item, 'seller_type', 'private'), dealer_org_nr, item.id))
@@ -308,8 +313,8 @@ class SQLStorage:
                     # New Listing: Insert Registry
                     conn.execute("""
                         INSERT INTO blocket_listings 
-                        (id, title, url, location, seller_type, published_at, created_year, created_month, last_price, last_like_count, dealer_org_nr)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (id, title, url, location, seller_type, published_at, created_year, created_month, last_price, last_like_count, dealer_org_nr, is_active)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)
                     """, (
                         item.id, item.title, item.url, item.location, 
                         getattr(item, 'seller_type', 'private'), pub_date, 
@@ -373,7 +378,7 @@ class SQLStorage:
         # To avoid false flags, we restrict this check to matching listings
         missing_listings = conn.execute(f"""
             SELECT id FROM blocket_listings 
-            WHERE status = 'active' 
+            WHERE is_active = TRUE 
               AND id NOT IN ({id_placeholders})
         """, scraped_ids).fetchall()
         
@@ -384,6 +389,7 @@ class SQLStorage:
                 conn.execute("""
                     UPDATE blocket_listings SET
                         status = 'removed',
+                        is_active = FALSE,
                         removed_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                 """, [missing_id])
@@ -403,7 +409,7 @@ class SQLStorage:
         # Fetch active listing IDs that went missing
         missing_listings = conn.execute(f"""
             SELECT id FROM blocket_listings 
-            WHERE status = 'active' 
+            WHERE is_active = TRUE 
               AND id NOT IN ({id_placeholders})
         """, all_scraped_ids).fetchall()
         
@@ -414,6 +420,7 @@ class SQLStorage:
                 conn.execute("""
                     UPDATE blocket_listings SET
                         status = 'removed',
+                        is_active = FALSE,
                         removed_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                 """, [missing_id])

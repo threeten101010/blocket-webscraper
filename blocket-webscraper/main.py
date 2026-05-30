@@ -51,7 +51,7 @@ def run_scraper_run(use_browser: bool, config: dict, storage: SQLStorage, base_d
         while True:
             # Construct URL with pagination parameter
             separator = "&" if "?" in cat_path else "?"
-            target_url = f"{base_url}{cat_path}{separator}p={page}"
+            target_url = f"{base_url}{cat_path}{separator}page={page}"
             
             print(f"📄 Scraping Page {page}: {target_url}")
             
@@ -78,6 +78,17 @@ def run_scraper_run(use_browser: bool, config: dict, storage: SQLStorage, base_d
             else:
                 consecutive_empty_pages = 0 # Reset counter
                 
+            # Detect pagination wrap-around / duplicate pages (Blocket falls back to page 1/default results on invalid page numbers)
+            new_item_found = False
+            for item in items:
+                if item.id not in all_scraped_ids:
+                    new_item_found = True
+                    break
+            
+            if not new_item_found:
+                print(f"🛑 Reached end of search results (pagination wrap-around) on Page {page}. All listings have already been scraped in this cycle.")
+                break
+                
             # Accumulate IDs for removal detection scan
             for item in items:
                 all_scraped_ids.append(item.id)
@@ -88,6 +99,12 @@ def run_scraper_run(use_browser: bool, config: dict, storage: SQLStorage, base_d
             
             print(f"📝 Page {page} complete. Stored {saved_count} listings.")
             
+            # Enforce max_pages limit if set in config
+            max_pages = settings.get("max_pages")
+            if max_pages and page >= max_pages:
+                print(f"🏁 Reached configured maximum page limit ({max_pages}).")
+                break
+                
             # Increment page count
             page += 1
             
