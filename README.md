@@ -23,6 +23,54 @@ blocket-webscraper/
     └── storage.py               # Handles DuckDB deduplicated storage pipelines
 ```
 
+## 🔄 Execution Sequence
+
+The sequence diagram below visualizes how the scraper handles the sharded categories list, paginates dynamically, bypasses pagination caps, performs JIT details parsing, records price changes, and triggers deactivation scans:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Main as main.py (Orchestrator)
+    participant Config as scraper_config.yaml
+    participant Scraper as src/scraper.py (Fetcher)
+    participant Parser as src/parser.py (Parser)
+    participant DB as src/storage.py (DuckDB)
+    participant Blocket as Blocket.se (Search Engine)
+
+    Main->>Config: 1. Read Target Shards & Settings
+    Config-->>Main: Return 20 Type/Price Shards
+    
+    loop For Each Category Shard (e.g. Touring Budget, Sport)
+        Note over Main: Initialize page = 1 & empty Scraped_IDs list
+        loop Page-by-Page Pagination
+            Main->>Scraper: 2. Request Page Content (URL, page)
+            Scraper->>Blocket: 3. Fetch HTML (urllib or Playwright)
+            Blocket-->>Scraper: Return HTML Webpage
+            Scraper-->>Main: Return HTML String
+            
+            Main->>Parser: 4. Extract Items (HTML)
+            Parser->>Parser: Try __NEXT_DATA__ JSON (Fallback to BS4)
+            Parser-->>Main: Return List of parsed BlocketItems
+            
+            alt 0 items returned OR duplicate page wrap-around detected
+                Note over Main: Break Pagination Loop
+            else New items found
+                Note over Main: Append new IDs to Scraped_IDs list
+                Main->>DB: 5. save_listings(items)
+                DB->>DB: Upsert blocket_listings & motorcycle_details
+                DB->>DB: Record price_history changes
+                DB-->>Main: Return number of items saved
+                Note over Main: Sleep for politeness delay (delay_seconds)
+                Note over Main: Increment page by 1
+            end
+        end
+        Main->>DB: 6. detect_removals_sweep(Scraped_IDs)
+        DB->>DB: Flag missing items as is_active = FALSE
+        DB-->>Main: Sweep Complete
+    end
+    Note over Main: Crawl Cycle Complete, Enter Cooldown Sleep
+```
+
 ---
 
 ## ⚡ Execution Models
