@@ -53,7 +53,8 @@ def is_motorcycle_listing(title: str, url: str) -> bool:
         "yamaha", "ktm", "honda", "suzuki", "kawasaki", "harley", "davidson", 
         "ducati", "bmw", "triumph", "husqvarna", "vespa", "scooter", "aprilia", 
         "guzzi", "indian", "enfield", "benelli", "peugeot", "kymco", "sym", 
-        "rieju", "derbi", "gasgas", "sherco", "beta", "fantic",
+        "rieju", "derbi", "gasgas", "sherco", "beta", "fantic", "can-am", "cfmoto", 
+        "piaggio", "stark", "voge", "zontes", "bsa", "monark",
         "motorcykel", "mc", "moped", "moppe", "sporthoj", "touring", 
         "offroad", "enduro", "cross", "skoter"
     }
@@ -333,9 +334,10 @@ def parse_html_fallback(html_content: str) -> List[BlocketItem]:
                 "yamaha", "ktm", "honda", "suzuki", "kawasaki", "harley", "davidson", 
                 "ducati", "bmw", "triumph", "husqvarna", "vespa", "aprilia", "indian",
                 "guzzi", "royal enfield", "enfield", "benelli", "peugeot", "kymco",
-                "sym", "rieju", "derbi", "gasgas", "sherco", "beta", "fantic"
+                "sym", "rieju", "derbi", "gasgas", "sherco", "beta", "fantic",
+                "can-am", "cfmoto", "piaggio", "stark", "voge", "zontes", "bsa", "monark"
             }
-            words = set(re.findall(r'\b[a-z]+\b', title.lower()))
+            words = set(re.findall(r'\b[a-z-]+\b', title.lower())) # Support hyphenated brands like can-am
             matched_brands = words.intersection(mc_brands)
             if matched_brands:
                 brand = list(matched_brands)[0].capitalize()
@@ -345,6 +347,12 @@ def parse_html_fallback(html_content: str) -> List[BlocketItem]:
                     brand = "Moto Guzzi"
                 elif brand in ("Enfield", "Royal"):
                     brand = "Royal Enfield"
+                elif brand == "Can-am":
+                    brand = "Can-Am"
+                elif brand == "Cfmoto":
+                    brand = "CFMOTO"
+                elif brand == "Bsa":
+                    brand = "BSA"
             
             # 4. Parse Model (extract from title after stripping brand/years)
             model = extract_model_from_title(title, brand)
