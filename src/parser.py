@@ -278,7 +278,7 @@ def parse_html_fallback(html_content: str) -> List[BlocketItem]:
             
             # 1. Parse Price (e.g., '69 900 kr' or '120 000kr')
             price_numeric = 0
-            price_match = re.search(r'(\d[\d\s ]*)\s*kr', card_text_spaced)
+            price_match = re.search(r'\b(\d{1,3}(?:[\s ]\d{3})*|\d{1,6})\s*kr', card_text_spaced)
             if price_match:
                 price_str = price_match.group(1)
                 price_numeric = int(re.sub(r'\D', '', price_str))

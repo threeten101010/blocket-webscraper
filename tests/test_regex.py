@@ -15,7 +15,7 @@ def test_parser_regex():
     card_text = "Yamaha MT-07 2021 | 1 250 mil | 69 900 kr | Stockholm"
     
     # 1. Test Price
-    price_match = re.search(r'(\d[\d\s ]*)\s*kr', card_text)
+    price_match = re.search(r'\b(\d{1,3}(?:[\s ]\d{3})*|\d{1,6})\s*kr', card_text)
     price = int(re.sub(r'\D', '', price_match.group(1))) if price_match else 0
     print(f"💰 Price Extracted:   {price} SEK (Expected: 69900)")
     
@@ -37,6 +37,14 @@ def test_parser_regex():
     assert price == 69900, "Price parsing failed!"
     assert mileage_km == 12500, "Mileage parsing failed!"
     assert model_year == 2021, "Model year parsing failed!"
+    
+    # 4. Test year-price concatenation bug fix
+    buggy_text = "Yamaha WR 250F 2025 113 900 kr"
+    buggy_price_match = re.search(r'\b(\d{1,3}(?:[\s ]\d{3})*|\d{1,6})\s*kr', buggy_text)
+    buggy_price = int(re.sub(r'\D', '', buggy_price_match.group(1))) if buggy_price_match else 0
+    print(f"💰 Buggy Price Extracted: {buggy_price} SEK (Expected: 113900, old regex got 2025113900)")
+    assert buggy_price == 113900, f"Year-price concatenation bug present! Got {buggy_price}"
+    
     print("✅ All Regex Parsers Validated Successfully!")
 
 if __name__ == "__main__":
