@@ -35,6 +35,7 @@ def run_scraper_run(use_browser: bool, config: dict, storage: SQLStorage, base_d
     delay = settings.get("delay_seconds", 3.0)
     
     total_new_items = 0
+    all_scraped_ids = []
     
     for category in categories:
         cat_name = category.get("name")
@@ -45,8 +46,6 @@ def run_scraper_run(use_browser: bool, config: dict, storage: SQLStorage, base_d
         max_empty_pages = 1 # Stop immediately on the first page returning 0 items
         
         print(f"\n📂 Crawling Category: '{cat_name}' (Continuous Sweep Mode)")
-        
-        all_scraped_ids = []
         
         while True:
             # Construct URL with pagination parameter
@@ -112,10 +111,10 @@ def run_scraper_run(use_browser: bool, config: dict, storage: SQLStorage, base_d
             throttle = delay + random.uniform(0.5, 1.5)
             time.sleep(throttle)
             
-        # Execute deactivation routine using all accumulated IDs for the complete category sweep
-        if all_scraped_ids:
-            print(f"🧹 Running deactivation sweep for '{cat_name}' with {len(all_scraped_ids)} scraped listing IDs...")
-            storage.detect_removals_sweep(all_scraped_ids)
+    # Execute global deactivation routine using all accumulated IDs across all categories
+    if all_scraped_ids:
+        print(f"🧹 Running global deactivation sweep with {len(all_scraped_ids)} total scraped listing IDs...")
+        storage.detect_removals_sweep(all_scraped_ids)
             
     return total_new_items
 
@@ -144,6 +143,14 @@ def run_scraper(use_browser: bool = False, continuous: bool = False, cooldown_mi
     # 3. Execution Loops
     if not continuous:
         total = run_scraper_run(use_browser, config, storage, base_dir)
+        
+        # Post-scrape market cohort clustering and deal finder analysis
+        try:
+            from src.clustering import run_market_clustering
+            run_market_clustering(db_path)
+        except Exception as e:
+            print(f"⚠️ Error running market clustering engine: {e}")
+            
         print("\n🏁 --- Scraper Job Complete ---")
         print(f"📊 New/Updated Listings Stored: {total}")
         print(f"📁 Cumulative Listings in DB:  {storage.get_listing_count()}")
@@ -157,6 +164,13 @@ def run_scraper(use_browser: bool = False, continuous: bool = False, cooldown_mi
                 cycle_start = time.time()
                 
                 total = run_scraper_run(use_browser, config, storage, base_dir)
+                
+                # Post-scrape market cohort clustering and deal finder analysis
+                try:
+                    from src.clustering import run_market_clustering
+                    run_market_clustering(db_path)
+                except Exception as e:
+                    print(f"⚠️ Error running market clustering engine: {e}")
                 
                 cycle_duration = (time.time() - cycle_start) / 60
                 print(f"\n✅ [Loop #{loop_count} Complete] Crawl duration: {cycle_duration:.2f} mins. Stored: {total} items.")
