@@ -1,0 +1,16 @@
+[Unit]
+Description=🇸🇪 Blocket Motorcycle Scraper Daemon
+After=network.target network-online.target tailscale.service
+
+[Service]
+Type=simple
+User=aaronberman
+WorkingDirectory=/home/aaronberman/Gemini/projects/blocket-webscraper
+ExecStart=/home/aaronberman/Gemini/projects/blocket-webscraper/venv/bin/python3 main.py --continuous
+Restart=always
+RestartSec=15
+StandardOutput=append:/home/aaronberman/Gemini/projects/blocket-webscraper/data/scraper.log
+StandardError=append:/home/aaronberman/Gemini/projects/blocket-webscraper/data/scraper.log
+
+[Install]
+WantedBy=multi-user.target
