@@ -1,0 +1,9 @@
+/home/aaronberman/Gemini/projects/blocket-webscraper/data/scraper.log {
+    weekly
+    rotate 4
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
