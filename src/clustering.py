@@ -99,11 +99,14 @@ def run_market_clustering(db_path: str):
         """)
 
         # 2. Ingest active & removed listings directly from physical tables (fully optimized)
+        import re
+
         listings = conn.execute("""
             SELECT 
                 b.id, b.title, b.status, b.location, b.last_price AS price_sek, 
                 m.brand, m.model, m.model_year, m.mileage_km, m.engine_cc, m.vehicle_type,
-                b.published_at, b.removed_at, b.last_scraped_at
+                b.published_at, b.removed_at, b.last_scraped_at,
+                b.seller_type
             FROM blocket_listings b
             LEFT JOIN motorcycle_details m ON b.id = m.listing_id
             WHERE b.last_price IS NOT NULL;
@@ -121,11 +124,23 @@ def run_market_clustering(db_path: str):
         cohorts_lvl_4 = {}
         cohorts_lvl_5 = {}
 
+        # Group listings by normalized model keys for specific baseline calculations
+        models_stats = {}
+
+        def get_model_key(brand, model):
+            if not brand or not model:
+                return None
+            b_clean = brand.strip().upper()
+            m_clean = re.sub(r'[^A-Z0-9]', '', model.strip().upper())
+            if not m_clean:
+                return None
+            return (b_clean, m_clean)
+
         processed_listings = []
         
         for row in listings:
             (l_id, title, status, loc, price, brand, model, year, km, cc, v_type, 
-             pub_at, rem_at, last_at) = row
+             pub_at, rem_at, last_at, seller_type) = row
             
             end_time = rem_at if status == 'removed' else last_at
             duration_hours = 0.0
@@ -147,19 +162,31 @@ def run_market_clustering(db_path: str):
             k4 = (brand_clean, v_type_clean)
             k5 = (v_type_clean,)
             
+            model_key = get_model_key(brand, model)
+            
             item = {
                 "id": l_id, "title": title, "status": status, "price": price, 
-                "duration": duration_hours, "loc_tier": loc_tier, "keys": [k1, k2, k3, k4, k5]
+                "duration": duration_hours, "loc_tier": loc_tier, "seller_type": seller_type or "private",
+                "keys": [k1, k2, k3, k4, k5], "model_key": model_key,
+                "model_year": year, "mileage_km": km, "engine_cc": cc,
+                "brand": brand_clean, "model": model
             }
             processed_listings.append(item)
             
+            # Add to cohort lists
             for map_dict, key in [(cohorts_lvl_1, k1), (cohorts_lvl_2, k2), 
                                  (cohorts_lvl_3, k3), (cohorts_lvl_4, k4), (cohorts_lvl_5, k5)]:
                 if key not in map_dict:
                     map_dict[key] = []
                 map_dict[key].append(item)
 
-        # Pre-calculate median price, median duration, and sizes
+            # Add to model lists
+            if model_key:
+                if model_key not in models_stats:
+                    models_stats[model_key] = []
+                models_stats[model_key].append(item)
+
+        # Pre-calculate median price, median duration, and sizes for cohorts
         def get_cohort_stats(cohort_list):
             prices = [x["price"] for x in cohort_list]
             durations = [x["duration"] for x in cohort_list if x["duration"] > 0]
@@ -180,32 +207,156 @@ def run_market_clustering(db_path: str):
             ({k: get_cohort_stats(v) for k, v in cohorts_lvl_5.items()}, "Level 5 (Style Class Fallback)")
         ]
 
+        # Pre-calculate baseline stats for models (with sizes, median year, median mileage)
+        model_medians = {}
+        for m_key, items_list in models_stats.items():
+            prices = [x["price"] for x in items_list]
+            years = [x["model_year"] for x in items_list if x["model_year"]]
+            mileages = [x["mileage_km"] for x in items_list if x["mileage_km"] is not None]
+            durations = [x["duration"] for x in items_list if x["duration"] > 0]
+            
+            prices.sort()
+            med_price = prices[len(prices)//2] if prices else 0
+            
+            years.sort()
+            med_year = years[len(years)//2] if years else None
+            
+            mileages.sort()
+            med_mileage = mileages[len(mileages)//2] if mileages else None
+            
+            durations.sort()
+            med_duration = durations[len(durations)//2] if durations else 24.0
+            
+            model_medians[m_key] = {
+                "size": len(prices),
+                "med_price": med_price,
+                "med_year": med_year,
+                "med_mileage": med_mileage,
+                "med_duration": med_duration
+            }
+
         insert_records = []
         for item in processed_listings:
             l_id = item["id"]
             price = item["price"]
             duration = item["duration"]
             loc_tier = item["loc_tier"]
+            model_key = item["model_key"]
             
+            used_model_baseline = False
+            baseline_price = 0
+            baseline_year = None
+            baseline_mileage = None
+            cohort_median_duration = 0
             cohort_lvl_name = "Level 5"
-            cohort_size, cohort_median_price, cohort_median_duration = 0, 0, 0
+            cohort_size = 0
             cohort_key_str = ""
             
-            for idx, (stats_map, lvl_desc) in enumerate(cohort_stats_lvl):
-                key = item["keys"][idx]
-                if key in stats_map:
-                    c_size, c_med_p, c_med_d = stats_map[key]
-                    if c_size >= 8 or idx == 4:
-                        cohort_lvl_name = lvl_desc
-                        cohort_size = c_size
-                        cohort_median_price = c_med_p
-                        cohort_median_duration = c_med_d
-                        cohort_key_str = " | ".join(list(key))
-                        break
+            # Check if we have a model-level baseline with at least 3 matching listings
+            if model_key and model_key in model_medians and model_medians[model_key]["size"] >= 3:
+                stats = model_medians[model_key]
+                baseline_price = stats["med_price"]
+                baseline_year = stats["med_year"]
+                baseline_mileage = stats["med_mileage"]
+                cohort_median_duration = stats["med_duration"]
+                cohort_lvl_name = "Model Specific Baseline"
+                cohort_size = stats["size"]
+                cohort_key_str = f"{model_key[0]} | {model_key[1]}"
+                used_model_baseline = True
+                
+            # If no model baseline, find the best cohort level fallback (from Level 1 to 5)
+            if not used_model_baseline:
+                for idx, (stats_map, lvl_desc) in enumerate(cohort_stats_lvl):
+                    key = item["keys"][idx]
+                    if key in stats_map:
+                        c_size, c_med_p, c_med_d = stats_map[key]
+                        if c_size >= 8 or idx == 4:
+                            cohort_lvl_name = lvl_desc
+                            cohort_size = c_size
+                            baseline_price = c_med_p
+                            cohort_median_duration = c_med_d
+                            cohort_key_str = " | ".join(list(key))
+                            
+                            # Fallback year and mileage to median of this cohort
+                            actual_items = [cohorts_lvl_1, cohorts_lvl_2, cohorts_lvl_3, cohorts_lvl_4, cohorts_lvl_5][idx][key]
+                            years = [x["model_year"] for x in actual_items if x["model_year"]]
+                            mileages = [x["mileage_km"] for x in actual_items if x["mileage_km"] is not None]
+                            
+                            years.sort()
+                            baseline_year = years[len(years)//2] if years else None
+                            
+                            mileages.sort()
+                            baseline_mileage = mileages[len(mileages)//2] if mileages else None
+                            break
+
+            # Compute granular adjustments for FMV calculation
+            age_adj = 0.0
+            if baseline_year and item["model_year"]:
+                year_diff = item["model_year"] - baseline_year
+                age_adj = year_diff * 0.06 # +/- 6.0% per year of difference from baseline year
+                age_adj = max(-0.50, min(0.30, age_adj))
+                
+            mileage_adj = 0.0
+            if baseline_mileage is not None and item["mileage_km"] is not None:
+                mileage_diff = baseline_mileage - item["mileage_km"]
+                mileage_adj = (mileage_diff / 5000.0) * 0.03 # +/- 3.0% per 5,000 km difference from baseline mileage
+                mileage_adj = max(-0.25, min(0.15, mileage_adj))
+                
+            geo_adj = 0.0
+            if loc_tier == "Metropolitan":
+                geo_adj = 0.025  # +2.5% premium in metropolitan areas (Stockholm, Gothenburg, Malmo)
+            elif loc_tier == "Regional/Rural":
+                geo_adj = -0.03  # -3.0% discount in rural regions
+                
+            seller_adj = 0.0
+            s_type = item["seller_type"].lower()
+            if "butik" in s_type or "företag" in s_type or "foretag" in s_type or "dealer" in s_type:
+                seller_adj = 0.06  # +6.0% premium for dealer sales (warranties/financing option)
+            elif "privat" in s_type:
+                seller_adj = -0.03 # -3.0% adjustment for private sales
+                
+            # Scan title for key value indicators (upgrades, defects, conditions)
+            title_clean = item["title"].lower()
+            text_adj = 0.0
             
+            # Positive features
+            if any(w in title_clean for w in ["nyservad", "servad", "ny-servad"]):
+                text_adj += 0.015
+            if any(w in title_clean for w in ["akrapovic", "helsystem", "avgassystem", "yoshimura", "sc project"]):
+                text_adj += 0.035
+            if any(w in title_clean for w in ["öhlins", "ohlins", "brembo"]):
+                text_adj += 0.040
+            if any(w in title_clean for w in ["nybesiktigad", "besiktigad", "nybes"]):
+                text_adj += 0.010
+            if any(w in title_clean for w in ["väskor", "sidoväskor", "sido-väskor", "toppbox", "packväskor"]):
+                text_adj += 0.025
+            if "abs" in title_clean:
+                text_adj += 0.015
+            if any(w in title_clean for w in ["nyskick", "kanonskick", "perfekt skick", "toppskick"]):
+                text_adj += 0.030
+                
+            # Negative features
+            if any(w in title_clean for w in ["repobjekt", "defekt", "rasad", "reservdelar"]):
+                text_adj -= 0.35
+            elif any(w in title_clean for w in ["skadad", "repad", "buckla", "spricka", "skada"]):
+                text_adj -= 0.10
+            if any(w in title_clean for w in ["måste bort", "billigare vid snabb", "slumpas"]):
+                text_adj -= 0.05
+                
+            text_adj = max(-0.40, min(0.15, text_adj))
+            
+            # Combine adjustments into a dynamic multiplier
+            total_multiplier = 1.0 + age_adj + mileage_adj + geo_adj + seller_adj + text_adj
+            total_multiplier = max(0.60, min(1.40, total_multiplier))
+            
+            custom_fmv = int(round((baseline_price * total_multiplier) / 100.0) * 100.0)
+            
+            if custom_fmv <= 0:
+                custom_fmv = price
+                
             price_dev_pct = 0.0
-            if cohort_median_price > 0:
-                price_dev_pct = ((price - cohort_median_price) / cohort_median_price) * 100.0
+            if custom_fmv > 0:
+                price_dev_pct = ((price - custom_fmv) / custom_fmv) * 100.0
                 
             duration_ratio = 1.0
             if cohort_median_duration > 0:
@@ -234,7 +385,7 @@ def run_market_clustering(db_path: str):
                     neg_score = int(max(0, (duration_ratio) * 20))
             
             insert_records.append((
-                l_id, cohort_lvl_name, cohort_key_str, cohort_size, cohort_median_price,
+                l_id, cohort_lvl_name, cohort_key_str, cohort_size, custom_fmv,
                 price_dev_pct, cohort_median_duration, duration, duration_ratio,
                 loc_tier, tag, neg_score
             ))
