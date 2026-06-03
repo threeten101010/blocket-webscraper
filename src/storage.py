@@ -48,8 +48,9 @@ class SQLStorage:
             )
         """)
         
-        # Ensure is_active column exists
+        # Ensure is_active and description columns exist
         conn.execute("ALTER TABLE blocket_listings ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE")
+        conn.execute("ALTER TABLE blocket_listings ADD COLUMN IF NOT EXISTS description VARCHAR")
         
         # 2. Time-series Price & Likes History (Engagement Tracker)
         conn.execute("""
@@ -114,6 +115,7 @@ class SQLStorage:
                 l.created_month,
                 l.status,
                 l.is_active,
+                l.description AS description,
                 l.first_scraped_at,
                 l.last_scraped_at,
                 l.removed_at,
@@ -219,41 +221,75 @@ class SQLStorage:
                 vehicle_type = getattr(item, 'vehicle_type', None)
                 reg_number = getattr(item, 'reg_number', None)
 
-                # Check if listing already exists to monitor changes
                 existing = conn.execute(
                     "SELECT last_price, last_like_count, status FROM blocket_listings WHERE id = ?",
                     [item.id]
                 ).fetchone()
-
-                # Check if specs are missing in the database to enable self-healing automatic backfill
+                            # Check if specs or description are missing in the database to enable self-healing automatic backfill
                 need_details = False
                 existing_details = None
+                description_text = None
+                
                 if existing:
                     existing_details = conn.execute(
                         "SELECT reg_number, vehicle_type FROM motorcycle_details WHERE listing_id = ?",
                         [item.id]
                     ).fetchone()
-                    if not existing_details or not existing_details[0] or not existing_details[1]:
-                        if not reg_number or not vehicle_type:
+                    
+                    existing_desc = conn.execute(
+                        "SELECT description FROM blocket_listings WHERE id = ?",
+                        [item.id]
+                    ).fetchone()
+                    
+                    if existing_desc and existing_desc[0]:
+                        description_text = existing_desc[0]
+                    
+                    # Trigger JIT details if specs are missing OR if description is missing
+                    if not existing_details or not existing_details[0] or not existing_details[1] or not description_text:
+                        if not reg_number or not vehicle_type or not description_text:
                             need_details = True
                 else:
-                    if not reg_number or not vehicle_type:
-                        need_details = True
-
-                # Perform JIT details scrape if needed
+                    need_details = True
+ 
+                # Perform JIT details and description scrape if needed
                 if need_details:
                     if not detail_html:
-                        print(f"🔍 JIT deep scraping specs for listing: {item.title} ({item.url})...")
+                        print(f"🔍 JIT deep scraping specs & description for: {item.title} ({item.url})...")
                         try:
                             from src.scraper import fetch_page_requests
                             detail_html = fetch_page_requests(item.url)
                         except Exception as e:
-                            print(f"❌ Failed to fetch detail page for specs: {e}")
-                            
+                            print(f"❌ Failed to fetch detail page: {e}")
+                             
                     if detail_html:
                         try:
                             from bs4 import BeautifulSoup
+                            import json
                             soup = BeautifulSoup(detail_html, 'html.parser')
+                            
+                            # A. Extract Description using CSS Selectors
+                            desc_div = soup.find('div', class_=re.compile(r'Description__DescriptionContent|description|body', re.IGNORECASE))
+                            if not desc_div:
+                                desc_div = soup.find('div', {'data-testid': 'ad-description'})
+                            if desc_div:
+                                description_text = desc_div.get_text("\n", strip=True)
+                            
+                            # B. Fallback JSON __NEXT_DATA__ parsing
+                            if not description_text:
+                                next_data_match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', detail_html)
+                                if next_data_match:
+                                    try:
+                                        data = json.loads(next_data_match.group(1))
+                                        apollo_state = data.get("props", {}).get("pageProps", {}).get("apolloState", {})
+                                        for key, val in apollo_state.items():
+                                            if key.startswith("Ad:"):
+                                                description_text = val.get("body")
+                                                break
+                                    except Exception:
+                                        pass
+                                        
+                            if description_text:
+                                print(f"   ↳ Description loaded: {description_text[:40]}... ({len(description_text)} chars)")
                             
                             # Extract Typ and Registreringsnummer using definition list siblings
                             for dt in soup.find_all('dt'):
@@ -267,7 +303,7 @@ class SQLStorage:
                                     elif 'registreringsnummer' in dt_text and not reg_number:
                                         reg_number = val_text
                                         print(f"   ↳ Reg.nr: {reg_number}")
-                                        
+                                         
                             # Backup regex for registration number in case HTML layout changes
                             if not reg_number:
                                 reg_match = re.search(r'\b(?:registreringsnummer|reg\.nr|regnr)\s*:\s*([a-z]{3}\s*\d{2}[a-z0-9])', detail_html, re.IGNORECASE)
@@ -275,7 +311,7 @@ class SQLStorage:
                                     reg_number = reg_match.group(1).replace(" ", "").upper()
                                     print(f"   ↳ Reg.nr (regex): {reg_number}")
                         except Exception as e:
-                            print(f"❌ Failed to parse detail page specs: {e}")
+                            print(f"❌ Failed to parse detail page specs & description: {e}")
 
                 # Merge with existing details if JIT scrape returned empty but DB already had them
                 if existing_details:
@@ -287,7 +323,7 @@ class SQLStorage:
                 if existing:
                     old_price, old_likes, status = existing
                     
-                    # Update active listing
+                    # Update active listing (Coalescing description so we do not overwrite a fetched one with null)
                     conn.execute("""
                         UPDATE blocket_listings SET
                             title = ?,
@@ -296,12 +332,13 @@ class SQLStorage:
                             last_like_count = ?,
                             seller_type = ?,
                             dealer_org_nr = ?,
+                            description = COALESCE(?, description),
                             last_scraped_at = CURRENT_TIMESTAMP,
                             status = 'active',
                             is_active = TRUE,
                             removed_at = NULL
                         WHERE id = ?
-                    """, (item.title, item.location, item.price, like_count, getattr(item, 'seller_type', 'private'), dealer_org_nr, item.id))
+                    """, (item.title, item.location, item.price, like_count, getattr(item, 'seller_type', 'private'), dealer_org_nr, description_text, item.id))
                     
                     # Insert history record ONLY if price or likes changed (to save space)
                     if item.price != old_price or like_count != old_likes or status == 'removed':
@@ -313,12 +350,12 @@ class SQLStorage:
                     # New Listing: Insert Registry
                     conn.execute("""
                         INSERT INTO blocket_listings 
-                        (id, title, url, location, seller_type, published_at, created_year, created_month, last_price, last_like_count, dealer_org_nr, is_active)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)
+                        (id, title, url, location, seller_type, published_at, created_year, created_month, last_price, last_like_count, dealer_org_nr, is_active, description)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?)
                     """, (
                         item.id, item.title, item.url, item.location, 
                         getattr(item, 'seller_type', 'private'), pub_date, 
-                        created_year, created_month, item.price, like_count, dealer_org_nr
+                        created_year, created_month, item.price, like_count, dealer_org_nr, description_text
                     ))
                     
                     # New Listing: Insert History

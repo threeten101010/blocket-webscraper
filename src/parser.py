@@ -333,11 +333,11 @@ def parse_html_fallback(html_content: str) -> List[BlocketItem]:
             mc_brands = {
                 "yamaha", "ktm", "honda", "suzuki", "kawasaki", "harley", "davidson", 
                 "ducati", "bmw", "triumph", "husqvarna", "vespa", "aprilia", "indian",
-                "guzzi", "royal enfield", "enfield", "benelli", "peugeot", "kymco",
+                "guzzi", "royal", "enfield", "alloy", "benelli", "peugeot", "kymco",
                 "sym", "rieju", "derbi", "gasgas", "sherco", "beta", "fantic",
                 "can-am", "cfmoto", "piaggio", "stark", "voge", "zontes", "bsa", "monark"
             }
-            words = set(re.findall(r'\b[a-z-]+\b', title.lower()))
+            words = set(re.findall(r'\b[a-z]+\b', title.lower()))
             matched_brands = words.intersection(mc_brands)
             if matched_brands:
                 brand = list(matched_brands)[0].capitalize()
@@ -345,11 +345,20 @@ def parse_html_fallback(html_content: str) -> List[BlocketItem]:
                     brand = "Harley-Davidson"
                 elif brand in ("Guzzi", "Moto"):
                     brand = "Moto Guzzi"
-                elif brand in ("Enfield", "Royal"):
+                elif brand == "Royal":
+                    if "enfield" in title.lower():
+                        brand = "Royal Enfield"
+                    elif "alloy" in title.lower():
+                        brand = "Royal Alloy"
+                    else:
+                        brand = "Royal Enfield"
+                elif brand == "Enfield":
                     brand = "Royal Enfield"
-                elif brand == "Can-am":
+                elif brand == "Alloy":
+                    brand = "Royal Alloy"
+                elif brand == "Can-am" or "can-am" in title.lower():
                     brand = "Can-Am"
-                elif brand == "Cfmoto":
+                elif brand == "Cfmoto" or "cfmoto" in title.lower():
                     brand = "CFMOTO"
                 elif brand == "Bsa":
                     brand = "BSA"
