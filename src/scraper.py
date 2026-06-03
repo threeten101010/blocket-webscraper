@@ -71,7 +71,22 @@ def fetch_page_playwright(url: str) -> str:
             time.sleep(random.uniform(2, 4))
             
             # Handle potential cookie banners (common in Sweden/EU)
-            # Find and click typical consent buttons (e.g. text containing "Godkänn", "Acceptera", "OK")
+            # 1. Handle iframe-based cookie consent banner (e.g., sp_message_iframe)
+            try:
+                iframe_locator = page.locator("iframe[id^='sp_message_iframe_']")
+                if iframe_locator.count() > 0:
+                    frame = page.frame_locator("iframe[id^='sp_message_iframe_']")
+                    for button_text in ["Godkänn alla", "Acceptera alla", "Godkänn", "Acceptera", "Accept all"]:
+                        btn = frame.locator(f"button:has-text('{button_text}')")
+                        if btn.count() > 0 and btn.first.is_visible():
+                            btn.first.click()
+                            print(f"🍪 [Scraper] Handled iframe cookie consent using: {button_text}")
+                            time.sleep(2)
+                            break
+            except Exception as iframe_err:
+                print(f"⚠️ [Scraper] Failed to handle iframe cookie consent: {iframe_err}")
+
+            # 2. Standard document-level cookie consent fallback
             consent_selectors = [
                 "button:has-text('Godkänn')",
                 "button:has-text('Acceptera')",
